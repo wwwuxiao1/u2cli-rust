@@ -56,10 +56,12 @@ fn window_size(text: &str) -> (i64, i64) {
     (width.expect("width"), height.expect("height"))
 }
 
+/// 读取命令的标准输出。
 fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).to_string()
 }
 
+/// 读取命令的标准错误。
 fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).to_string()
 }

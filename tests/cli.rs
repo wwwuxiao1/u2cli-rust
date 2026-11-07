@@ -254,6 +254,7 @@ fn device_commands_print_visible_results() {
     assert!(stdout(&url).contains("d.open_url('https://example.com')"));
 }
 
+/// 服务未响应时，安装命令会推送 jar 并拉起进程。
 #[test]
 fn installs_phone_service_when_it_is_not_running() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -287,6 +288,7 @@ fn installs_phone_service_when_it_is_not_running() {
     assert!(recorded.contains("app_process"), "{recorded}");
 }
 
+/// 服务已响应且文件一致时，安装命令不推送、不重启。
 #[test]
 fn install_service_skips_push_when_phone_service_matches() {
     let phone = Phone::start();
@@ -300,6 +302,7 @@ fn install_service_skips_push_when_phone_service_matches() {
     assert!(!recorded.contains("app_process"), "{recorded}");
 }
 
+/// 设备文件与内置 jar 不一致时，安装命令会推送并重启服务。
 #[test]
 fn install_service_replaces_mismatched_jar() {
     let phone = Phone::start();
