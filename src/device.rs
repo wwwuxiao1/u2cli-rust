@@ -118,7 +118,13 @@ impl Phone {
                     return Err(format!("shell timed out after {timeout_secs}s"));
                 }
                 Ok(None) => thread::sleep(Duration::from_millis(20)),
-                Err(error) => return Err(format!("adb shell failed: {error}")),
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = stdout_task.join();
+                    let _ = stderr_task.join();
+                    return Err(format!("adb shell failed: {error}"));
+                }
             }
         };
         let stdout = stdout_task.join().unwrap_or_default();
