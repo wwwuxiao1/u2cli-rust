@@ -92,7 +92,7 @@ case "$1" in
       getprop\ ro.product.cpu.abi) printf 'arm64-v8a\n' ;;
       getprop\ ro.build.version.release) printf '14\n' ;;
       wm\ size) printf 'Physical size: 1080x2400\n' ;;
-      dumpsys\ window) printf 'mCurrentFocus=Window{abc u0 com.example/.Main}\n' ;;
+      dumpsys\ window) printf 'Application at fault: com.other/.Other\nmCurrentFocus=Window{abc u0 com.example/.Main}\n' ;;
       big-output)
         i=0
         while [ "$i" -lt 200 ]; do

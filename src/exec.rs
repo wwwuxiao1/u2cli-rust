@@ -496,15 +496,21 @@ fn window_size(phone: &Phone) -> Result<(i64, i64), String> {
 /// 从当前焦点窗口读取包名和 activity。
 fn current_app(phone: &Phone) -> Result<(String, String), String> {
     let (output, _) = phone.shell("dumpsys window")?;
-    for line in output.lines() {
-        if let Some(component) = line.split_whitespace().find(|part| part.contains('/')) {
-            let component = component.trim_matches(|ch| ch == '{' || ch == '}');
-            if let Some((package, activity)) = component.split_once('/') {
-                return Ok((package.to_string(), activity.to_string()));
-            }
+    let focused = output.lines().filter(|line| line.contains("mCurrentFocus=") || line.contains("mFocusedApp="));
+    for line in focused {
+        if let Some((package, activity)) = component_from_line(line) {
+            return Ok((package, activity));
         }
     }
     Err("Couldn't get focused app".to_string())
+}
+
+/// 从一行 dumpsys 文本中取出包名和 activity。
+fn component_from_line(line: &str) -> Option<(String, String)> {
+    let component = line.split_whitespace().find(|part| part.contains('/'))?;
+    let component = component.trim_matches(|ch| ch == '{' || ch == '}');
+    let (package, activity) = component.split_once('/')?;
+    Some((package.to_string(), activity.to_string()))
 }
 
 /// 解析应用的启动 activity。
