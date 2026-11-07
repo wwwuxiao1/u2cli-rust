@@ -164,6 +164,40 @@ fn help_lists_command_groups() {
     assert!(text.contains("install-service"), "{text}");
 }
 
+/// 根帮助和子命令帮助用中文说明参数，并给出例子。
+#[test]
+fn help_explains_parameters_in_chinese() {
+    let root = stdout(&run(&["--help"]));
+    for token in ["-d, --debug", "-s, --serial", "--server-host", "--server-port", "--device-port"] {
+        assert!(root.contains(token), "{token} missing in {root}");
+    }
+    assert!(root.contains("指定要操作的设备序列号"), "{root}");
+    assert!(root.contains("例子: u2cli -s SERIAL device-info"), "{root}");
+    assert!(root.contains("安装并拉起手机端服务"), "{root}");
+    let cases = [
+        (vec!["screenshot", "--help"], vec!["FILENAME", "保存当前画面", "例子: u2cli screenshot /tmp/screen.jpg"]),
+        (vec!["dump-hierarchy", "--help"], vec!["--raw", "输出未压缩层级", "例子: u2cli dump-hierarchy --raw"]),
+        (vec!["shell", "--help"], vec!["--timeout", "最长等待秒数", "例子: u2cli shell --timeout 10 echo hello"]),
+        (vec!["app-start", "--help"], vec!["--activity", "指定要打开的 Activity", "例子: u2cli app-start com.android.settings --activity .Settings"]),
+        (vec!["app-list", "--help"], vec!["--filter", "按包名片段过滤", "例子: u2cli app-list --filter -3"]),
+        (vec!["app-stop", "--help"], vec!["--all", "停止第三方应用", "例子: u2cli app-stop --all"]),
+        (vec!["click", "--help"], vec!["--text", "按完整文本定位控件", "例子: u2cli click --text Gmail"]),
+        (vec!["swipe", "--help"], vec!["--duration", "滑动耗时", "例子: u2cli swipe 500 1800 500 400 --duration 0.3"]),
+        (vec!["scroll", "--help"], vec!["--to-text", "滚到包含这段文字的位置", "例子: u2cli scroll --scrollable --to-text Settings"]),
+        (vec!["open-url", "--help"], vec!["URL", "要打开的链接", "例子: u2cli open-url https://example.com"]),
+        (vec!["device-info", "--help"], vec!["不需要额外参数", "例子: u2cli device-info"]),
+        (vec!["install-service", "--help"], vec!["不需要额外参数", "例子: u2cli install-service"]),
+    ];
+    for (args, needles) in cases {
+        let output = run(&args);
+        assert_eq!(output.status.code(), Some(0), "{args:?}");
+        let text = stdout(&output);
+        for needle in needles {
+            assert!(text.contains(needle), "{args:?} missing {needle} in {text}");
+        }
+    }
+}
+
 #[test]
 fn usage_errors_are_distinct_and_do_not_touch_devices() {
     let cases = [
