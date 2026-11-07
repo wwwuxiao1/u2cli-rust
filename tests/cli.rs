@@ -86,6 +86,13 @@ case "$1" in
       getprop\ ro.build.version.release) printf '14\n' ;;
       wm\ size) printf 'Physical size: 1080x2400\n' ;;
       dumpsys\ window) printf 'mCurrentFocus=Window{abc u0 com.example/.Main}\n' ;;
+      big-output)
+        i=0
+        while [ "$i" -lt 200 ]; do
+          printf '%01024d\n' "$i"
+          i=$((i + 1))
+        done
+        ;;
       pm\ list\ packages*) printf 'package:com.example.one\npackage:com.example.two\n' ;;
       cmd\ package\ resolve-activity*) printf 'com.example/.Main\n' ;;
       toybox\ md5sum*) printf 'd4f2cb5299dfd894a40fdde067b56bc9  /data/local/tmp/u2.jar\n' ;;
@@ -304,6 +311,14 @@ fn device_commands_print_visible_results() {
     }
     let url = run_with_phone(&["open-url", "https://example.com"], &phone);
     assert!(stdout(&url).contains("d.open_url('https://example.com')"));
+}
+
+#[test]
+fn shell_returns_output_larger_than_the_pipe() {
+    let phone = Phone::start();
+    let output = run_with_phone(&["shell", "--timeout", "5", "big-output"], &phone);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(stdout(&output).len() > 100_000, "len {}", stdout(&output).len());
 }
 
 /// 服务未响应时，安装命令会推送 jar 并拉起进程。

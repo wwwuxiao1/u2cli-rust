@@ -94,6 +94,7 @@ impl Phone {
     }
 
     /// 在设备上执行 shell，并在超时后结束命令。
+    /// 读取和等待同时进行，输出超过管道缓冲时进程仍能退出。
     pub fn shell_within(&self, command: &str, timeout_secs: u64) -> Result<(String, i32), String> {
         let mut child = Command::new("adb")
             .args(["-s", &self.serial, "shell", command])
@@ -101,28 +102,31 @@ impl Phone {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| format!("adb shell failed: {error}"))?;
+        let stdout_pipe = child.stdout.take().ok_or_else(|| "adb shell failed: missing stdout".to_string())?;
+        let stderr_pipe = child.stderr.take().ok_or_else(|| "adb shell failed: missing stderr".to_string())?;
+        let stdout_task = thread::spawn(move || read_pipe(stdout_pipe));
+        let stderr_task = thread::spawn(move || read_pipe(stderr_pipe));
         let deadline = Instant::now() + Duration::from_secs(timeout_secs.max(1));
-        loop {
-            if let Some(status) = child.try_wait().map_err(|error| format!("adb shell failed: {error}"))? {
-                let mut stdout = String::new();
-                let mut stderr = String::new();
-                if let Some(mut pipe) = child.stdout.take() {
-                    pipe.read_to_string(&mut stdout).ok();
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) if Instant::now() >= deadline => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = stdout_task.join();
+                    let _ = stderr_task.join();
+                    return Err(format!("shell timed out after {timeout_secs}s"));
                 }
-                if let Some(mut pipe) = child.stderr.take() {
-                    pipe.read_to_string(&mut stderr).ok();
-                }
-                if !status.success() && stdout.trim().is_empty() {
-                    return Err(format!("adb shell failed: {stderr}"));
-                }
-                return Ok((stdout, status.code().unwrap_or(0)));
+                Ok(None) => thread::sleep(Duration::from_millis(20)),
+                Err(error) => return Err(format!("adb shell failed: {error}")),
             }
-            if Instant::now() >= deadline {
-                let _ = child.kill();
-                return Err(format!("shell timed out after {timeout_secs}s"));
-            }
-            thread::sleep(Duration::from_millis(20));
+        };
+        let stdout = stdout_task.join().unwrap_or_default();
+        let stderr = stderr_task.join().unwrap_or_default();
+        if !status.success() && stdout.trim().is_empty() {
+            return Err(format!("adb shell failed: {stderr}"));
         }
+        Ok((stdout, status.code().unwrap_or(0)))
     }
 
     /// 读取设备属性。
@@ -133,6 +137,13 @@ impl Phone {
         }
         Ok(output.trim().to_string())
     }
+}
+
+/// 读完一条管道。调用方在进程运行时开始读，避免管道被写满。
+fn read_pipe(mut pipe: impl Read) -> String {
+    let mut text = String::new();
+    let _ = pipe.read_to_string(&mut text);
+    text
 }
 
 /// 从 adb devices 中取出唯一在线设备。
