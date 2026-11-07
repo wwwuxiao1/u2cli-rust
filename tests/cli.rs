@@ -71,7 +71,14 @@ case "$1" in
   forward)
     printf '%s\n' "$port"
     ;;
-  install|uninstall)
+  install)
+    printf 'Success\n'
+    ;;
+  uninstall)
+    if [ "$2" = "com.missing.app" ]; then
+      printf 'Failure [DELETE_FAILED_INTERNAL_ERROR]\n'
+      exit 1
+    fi
     printf 'Success\n'
     ;;
   shell)
@@ -311,6 +318,14 @@ fn device_commands_print_visible_results() {
     }
     let url = run_with_phone(&["open-url", "https://example.com"], &phone);
     assert!(stdout(&url).contains("d.open_url('https://example.com')"));
+}
+
+#[test]
+fn app_uninstall_reports_adb_stdout() {
+    let phone = Phone::start();
+    let output = run_with_phone(&["app-uninstall", "com.missing.app"], &phone);
+    assert_ne!(output.status.code(), Some(0));
+    assert!(stderr(&output).contains("DELETE_FAILED_INTERNAL_ERROR"), "{}", stderr(&output));
 }
 
 #[test]

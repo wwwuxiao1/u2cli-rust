@@ -544,13 +544,19 @@ fn absolute_path(path: &str) -> String {
     }
 }
 
-/// 运行 adb 并在失败时返回错误。
+/// 运行 adb 并在失败时返回错误。原因可能在标准错误，也可能在标准输出。
 fn adb_ok(args: &[&str]) -> Result<(), String> {
     let output = std::process::Command::new("adb").args(args).output().map_err(|error| format!("adb is not available: {error}"))?;
     if output.status.success() {
-        Ok(())
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let message = if !stderr.is_empty() { stderr } else { stdout };
+    if message.is_empty() {
+        Err(format!("adb exited with status {}", output.status))
     } else {
-        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+        Err(message)
     }
 }
 
