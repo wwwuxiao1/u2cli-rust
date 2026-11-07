@@ -115,6 +115,8 @@ esac
 
 /// 假手机端服务，按 JSON-RPC 方法返回固定结果。
 fn serve(listener: TcpListener) {
+    let port = listener.local_addr().map(|addr| addr.port()).unwrap_or(0);
+    let rpc_log = std::env::temp_dir().join(format!("u2cli-rpc-{port}.log"));
     for stream in listener.incoming() {
         let mut stream = match stream {
             Ok(stream) => stream,
@@ -130,10 +132,16 @@ fn serve(listener: TcpListener) {
             continue;
         }
         let body = request.split("\r\n\r\n").nth(1).unwrap_or("");
+        if let Ok(mut log) = std::fs::OpenOptions::new().create(true).append(true).open(&rpc_log) {
+            let _ = writeln!(log, "{body}");
+        }
         // 手机端 setClipboard 需要 (label, text)；只传一个参数时返回和真机一样的错误。
         if body.contains("\"method\":\"setClipboard\"") {
             let params = body.split("\"params\":").nth(1).unwrap_or("");
-            let payload = if params.matches(',').count() >= 1 {
+            let raw_text = body.contains("网易大神") || body.contains('😀');
+            let chinese_ok = !body.contains("\\u7f51") || body.contains("\\u7f51\\u6613\\u5927\\u795e");
+            let emoji_ok = !body.contains("\\ud83d") || body.contains("\\ud83d\\ude00");
+            let payload = if params.matches(',').count() >= 1 && !raw_text && chinese_ok && emoji_ok {
                 "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":null}".to_string()
             } else {
                 "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32602,\"message\":\"method parameters invalid\"}}".to_string()
@@ -151,7 +159,13 @@ fn serve(listener: TcpListener) {
         } else if body.contains("waitUntilGone") {
             "false".to_string()
         } else if body.contains("waitForExists") || body.contains("\"method\":\"exist\"") {
-            "true".to_string()
+            if body.contains("网易大神") {
+                "false".to_string()
+            } else if body.contains("\\u7f51") {
+                if body.contains("\\u7f51\\u6613\\u5927\\u795e") { "true".to_string() } else { "false".to_string() }
+            } else {
+                "true".to_string()
+            }
         } else {
             "true".to_string()
         };
@@ -568,6 +582,18 @@ fn input_and_selectors_match_visible_commands() {
     assert_eq!(run_with_phone(&["drag", "1", "2", "3", "4"], &phone).status.code(), Some(0));
     let exists = run_with_phone(&["exists", "--text", "Gmail", "--timeout", "3"], &phone);
     assert!(stdout(&exists).contains("result: True"), "{}", stdout(&exists));
+    let chinese = run_with_phone(&["exists", "--text", "网易大神", "--timeout", "3"], &phone);
+    assert_eq!(chinese.status.code(), Some(0), "{}", stderr(&chinese));
+    assert!(stdout(&chinese).contains("result: True"), "{}", stdout(&chinese));
+    let typed_chinese = run_with_phone(&["send-keys", "网易大神"], &phone);
+    assert_eq!(typed_chinese.status.code(), Some(0), "{}", stderr(&typed_chinese));
+    let typed_emoji = run_with_phone(&["send-keys", "😀"], &phone);
+    assert_eq!(typed_emoji.status.code(), Some(0), "{}", stderr(&typed_emoji));
+    let rpc_log = std::env::temp_dir().join(format!("u2cli-rpc-{}.log", phone.port));
+    let rpc = std::fs::read_to_string(&rpc_log).unwrap_or_default();
+    assert!(rpc.contains("\\u7f51\\u6613\\u5927\\u795e"), "{rpc}");
+    assert!(rpc.contains("\\ud83d\\ude00"), "{rpc}");
+    assert!(!rpc.contains("网易大神") && !rpc.contains('😀'), "{rpc}");
     let gone = run_with_phone(&["wait", "--text", "Loading", "--gone", "--timeout", "10"], &phone);
     assert!(stdout(&gone).contains("wait_gone"));
     let scroll = run_with_phone(&["scroll", "--scrollable", "--to-text", "Settings"], &phone);

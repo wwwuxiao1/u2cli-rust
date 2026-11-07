@@ -45,7 +45,7 @@ pub fn stringify(value: &Value) -> String {
     }
 }
 
-/// 转义 JSON 字符串。
+/// 转义 JSON 字符串。非 ASCII 写成 \\u，手机端服务不认直接写入的中文。
 fn escape(text: &str) -> String {
     let mut out = String::new();
     for ch in text.chars() {
@@ -53,10 +53,24 @@ fn escape(text: &str) -> String {
             '"' => out.push_str("\\\""),
             '\\' => out.push_str("\\\\"),
             '\n' => out.push_str("\\n"),
+            other if (other as u32) > 0x7F => push_unicode(&mut out, other),
             other => out.push(other),
         }
     }
     out
+}
+
+/// 把一个非 ASCII 字符写成 \\uXXXX。超出基本平面时写成代理项对。
+fn push_unicode(out: &mut String, ch: char) {
+    let code = ch as u32;
+    if code <= 0xFFFF {
+        out.push_str(&format!("\\u{code:04x}"));
+        return;
+    }
+    let adjusted = code - 0x10000;
+    let high = 0xD800 + (adjusted >> 10);
+    let low = 0xDC00 + (adjusted & 0x3FF);
+    out.push_str(&format!("\\u{high:04x}\\u{low:04x}"));
 }
 
 struct Parser<'a> {
