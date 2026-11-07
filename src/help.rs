@@ -64,31 +64,52 @@ fn no_args(example: &str) -> String {
     format!("不需要额外参数。\n例子: {example}\n")
 }
 
-/// 选择器参数。例子里的命令名换成当前子命令。
-fn selector_options(command: &str) -> String {
-    [
-        option("--text TEXT", "按完整文本定位控件。", &format!("u2cli {command} --text Gmail")),
-        option("--text-contains TEXT", "按文本片段定位控件。", &format!("u2cli {command} --text-contains 设置")),
-        option("--text-matches REGEX", "按文本正则定位控件。", &format!("u2cli {command} --text-matches ^Gmail")),
-        option("--text-starts-with TEXT", "按文本开头定位控件。", &format!("u2cli {command} --text-starts-with G")),
-        option("--description TEXT", "按完整描述定位控件。", &format!("u2cli {command} --description 返回")),
-        option("--description-contains TEXT", "按描述片段定位控件。", &format!("u2cli {command} --description-contains 返回")),
-        option("--resource-id ID", "按资源 id 定位控件。", &format!("u2cli {command} --resource-id com.example:id/title")),
-        option("--class-name CLASS", "按控件类名定位。", &format!("u2cli {command} --class-name android.widget.TextView")),
-        option("--package PACKAGE", "按应用包名定位控件。", &format!("u2cli {command} --package com.example")),
-        option("--selected", "只匹配已选中的控件。", &format!("u2cli {command} --selected")),
-        option("--focused", "只匹配有焦点的控件。", &format!("u2cli {command} --focused")),
-        option("--enabled", "只匹配可用的控件。", &format!("u2cli {command} --enabled")),
-        option("--scrollable", "只匹配可滚动的控件。", &format!("u2cli {command} --scrollable")),
-        option("--clickable", "只匹配可点击的控件。", &format!("u2cli {command} --clickable")),
-        option("--checked", "只匹配已勾选的控件。", &format!("u2cli {command} --checked")),
-        option("--checkable", "只匹配可勾选的控件。", &format!("u2cli {command} --checkable")),
-        option("--instance N", "在匹配结果里取第几个，从 0 开始。", &format!("u2cli {command} --text OK --instance 0")),
-        option("--index N", "按控件在父节点中的序号定位。", &format!("u2cli {command} --index 0")),
-        option("--child KEY=VALUE", "在父控件下再加一层子条件。", &format!("u2cli {command} --resource-id com.example:id/list --child text=OK")),
-        option("--child-text TEXT", "子控件的完整文本。", &format!("u2cli {command} --resource-id com.example:id/list --child-text OK")),
-        option("--timeout SECONDS", "等待控件出现的秒数。", &format!("u2cli {command} --text Gmail --timeout 3")),
-    ].concat()
+/// 选择器参数。with_timeout 为真时才写 --timeout，scroll 不接受它。
+fn selector_options(command: &str, with_timeout: bool) -> String {
+    let valued = [
+        ("text", "TEXT", "按完整文本定位控件。", "Gmail"),
+        ("text-contains", "TEXT", "按文本片段定位控件。", "设置"),
+        ("text-matches", "REGEX", "按文本正则定位控件。", "^Gmail"),
+        ("text-starts-with", "TEXT", "按文本开头定位控件。", "G"),
+        ("description", "TEXT", "按完整描述定位控件。", "返回"),
+        ("description-contains", "TEXT", "按描述片段定位控件。", "返回"),
+        ("resource-id", "ID", "按资源 id 定位控件。", "com.example:id/title"),
+        ("class-name", "CLASS", "按控件类名定位。", "android.widget.TextView"),
+        ("package", "PACKAGE", "按应用包名定位控件。", "com.example"),
+        ("instance", "N", "在匹配结果里取第几个，从 0 开始。", "0"),
+        ("index", "N", "按控件在父节点中的序号定位。", "0"),
+    ];
+    let flags = [
+        ("selected", "只匹配已选中的控件。"),
+        ("focused", "只匹配有焦点的控件。"),
+        ("enabled", "只匹配可用的控件。"),
+        ("scrollable", "只匹配可滚动的控件。"),
+        ("clickable", "只匹配可点击的控件。"),
+        ("checked", "只匹配已勾选的控件。"),
+        ("checkable", "只匹配可勾选的控件。"),
+    ];
+    let mut text = String::new();
+    for (key, meta, sentence, sample) in valued {
+        text.push_str(&option(&format!("--{key} {meta}"), sentence, &format!("u2cli {command} --{key} {sample}")));
+        text.push_str(&option(
+            &format!("--child-{key} {meta}"),
+            &format!("子控件：{sentence}"),
+            &format!("u2cli {command} --resource-id com.example:id/list --child-{key} {sample}"),
+        ));
+    }
+    for (key, sentence) in flags {
+        text.push_str(&option(&format!("--{key}"), sentence, &format!("u2cli {command} --{key}")));
+        text.push_str(&option(
+            &format!("--child-{key}"),
+            &format!("子控件：{sentence}"),
+            &format!("u2cli {command} --resource-id com.example:id/list --child-{key}"),
+        ));
+    }
+    text.push_str(&option("--child KEY=VALUE", "在父控件下再加一层子条件。", &format!("u2cli {command} --resource-id com.example:id/list --child text=OK")));
+    if with_timeout {
+        text.push_str(&option("--timeout SECONDS", "等待控件出现的秒数。", &format!("u2cli {command} --text Gmail --timeout 3")));
+    }
+    text
 }
 
 /// 根帮助里每条命令的一句话。
@@ -135,8 +156,8 @@ fn detail(name: &str) -> String {
         "server" => option("--foreground", "留在前台运行。start-server 会自己带上它。", "u2cli server --foreground"),
         "screenshot" => option("FILENAME", "保存当前画面的文件路径。省略时写到 screenshot.jpg。", "u2cli screenshot /tmp/screen.jpg"),
         "dump-hierarchy" => {
-            option("--raw", "输出未压缩层级。", "u2cli dump-hierarchy --raw")
-                + &option("--compressed", "输出压缩后的层级。这是默认行为。", "u2cli dump-hierarchy --compressed")
+            option("--raw", "输出未压缩层级，也就是手机返回的原始 XML。", "u2cli dump-hierarchy --raw")
+                + &option("--compressed", "向手机请求压缩后的 XML。默认不发送这个参数。", "u2cli dump-hierarchy --compressed")
                 + &option("--max-depth N", "限制层级深度。", "u2cli dump-hierarchy --max-depth 5")
                 + &option("-o, --output FILE", "把层级写到文件。", "u2cli dump-hierarchy -o /tmp/hierarchy.txt")
         }
@@ -163,7 +184,7 @@ fn detail(name: &str) -> String {
             option("TEXT", "要输入的文字。默认先清空输入框。", "u2cli send-keys hello")
                 + &option("--no-clear", "输入前保留输入框里的原文。", "u2cli send-keys --no-clear hello")
         }
-        "click" => option("X Y", "点击位置。可以用像素，也可以用 0 到 1 的比例。", "u2cli click 500 1200") + &selector_options("click"),
+        "click" => option("X Y", "点击位置。可以用像素，也可以用 0 到 1 的比例。", "u2cli click 500 1200") + &selector_options("click", true),
         "double-click" => {
             option("X Y", "双击位置。可以用像素或比例。", "u2cli double-click 500 1200")
                 + &option("--duration SECONDS", "两次点击之间的间隔。", "u2cli double-click 500 1200 --duration 0.1")
@@ -171,7 +192,7 @@ fn detail(name: &str) -> String {
         "long-click" => {
             option("X Y", "长按位置。可以用像素或比例。", "u2cli long-click 500 1200")
                 + &option("--duration SECONDS", "按住的秒数。", "u2cli long-click 500 1200 --duration 1")
-                + &selector_options("long-click")
+                + &selector_options("long-click", true)
         }
         "swipe" => {
             option("FX FY TX TY", "起点和终点。也可以只写 up、down、left、right。", "u2cli swipe 500 1800 500 400 --duration 0.3")
@@ -183,14 +204,14 @@ fn detail(name: &str) -> String {
             option("SX SY EX EY", "拖动的起点和终点。", "u2cli drag 300 1200 800 1200")
                 + &option("--duration SECONDS", "拖动耗时，单位是秒。", "u2cli drag 300 1200 800 1200 --duration 0.5")
         }
-        "exists" => selector_options("exists"),
-        "wait" => option("--gone", "改为等待控件消失。", "u2cli wait --text Loading --gone --timeout 10") + &selector_options("wait"),
+        "exists" => selector_options("exists", true),
+        "wait" => option("--gone", "改为等待控件消失。", "u2cli wait --text Loading --gone --timeout 10") + &selector_options("wait", true),
         "scroll" => {
             option("--direction vert|horiz", "滚动方向，默认垂直。", "u2cli scroll --scrollable --direction vert")
                 + &option("--action forward|backward|toEnd|toBeginning", "滚动动作。", "u2cli scroll --scrollable --action forward")
                 + &option("--max-swipes N", "最多滚动次数。", "u2cli scroll --scrollable --max-swipes 5")
                 + &option("--to-text TEXT", "滚到包含这段文字的位置。", "u2cli scroll --scrollable --to-text Settings")
-                + &selector_options("scroll")
+                + &selector_options("scroll", false)
         }
         "open-url" => option("URL", "要打开的链接。", "u2cli open-url https://example.com"),
         "start-server" => no_args("u2cli start-server"),
