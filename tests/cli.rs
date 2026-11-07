@@ -116,6 +116,18 @@ fn serve(listener: TcpListener) {
             continue;
         }
         let body = request.split("\r\n\r\n").nth(1).unwrap_or("");
+        // 手机端 setClipboard 需要 (label, text)；只传一个参数时返回和真机一样的错误。
+        if body.contains("\"method\":\"setClipboard\"") {
+            let params = body.split("\"params\":").nth(1).unwrap_or("");
+            let payload = if params.matches(',').count() >= 1 {
+                "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":null}".to_string()
+            } else {
+                "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32602,\"message\":\"method parameters invalid\"}}".to_string()
+            };
+            let response = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}", payload.len());
+            let _ = stream.write_all(response.as_bytes());
+            continue;
+        }
         let result = if body.contains("takeScreenshot") {
             "\"/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAGf/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABBQJ//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAwEBPwF//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPwF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQAGPwJ//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPyF//9k=\"".to_string()
         } else if body.contains("dumpWindowHierarchy") {
@@ -505,8 +517,10 @@ fn input_and_selectors_match_visible_commands() {
     let press = run_with_phone(&["press", "home"], &phone);
     assert!(stdout(&press).contains("d.press('home')"), "{}", stderr(&press));
     let typed = run_with_phone(&["send-keys", "hello"], &phone);
+    assert_eq!(typed.status.code(), Some(0), "{}", stderr(&typed));
     assert!(stdout(&typed).contains("d.send_keys('hello')"));
     let kept = run_with_phone(&["send-keys", "--no-clear", "hello"], &phone);
+    assert_eq!(kept.status.code(), Some(0), "{}", stderr(&kept));
     assert!(stdout(&kept).contains("clear=False"));
     assert_eq!(run_with_phone(&["clear-text"], &phone).status.code(), Some(0));
     let click = run_with_phone(&["click", "500", "1200"], &phone);

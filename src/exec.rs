@@ -249,7 +249,8 @@ fn send_keys(invocation: &Invocation, text: &str, clear: bool) -> Result<String,
     if clear {
         phone.call("clearInputText", &Value::Array(vec![]))?;
     }
-    phone.call("setClipboard", &Value::Array(vec![Value::Text(text.to_string())]))?;
+    // 手机端 setClipboard 需要 (label, text)，少传 label 会返回 method parameters invalid。
+    phone.call("setClipboard", &Value::Array(vec![Value::Text("label".to_string()), Value::Text(text.to_string())]))?;
     phone.call("pasteClipboard", &Value::Array(vec![]))?;
     let code = if clear {
         format!("d.send_keys({})", py_str(text))
