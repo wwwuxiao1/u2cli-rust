@@ -1,0 +1,9 @@
+[package]
+name = "u2cli"
+version = "0.1.0"
+edition = "2021"
+description = "不依赖 Python 的 u2cli 单文件命令"
+
+[[bin]]
+name = "u2cli"
+path = "src/main.rs"
