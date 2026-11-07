@@ -180,8 +180,8 @@ impl<'a> XmlParser<'a> {
                 children.push(self.parse_element()?);
             } else if self.index >= self.text.len() {
                 return Err("unterminated element".to_string());
-            } else {
-                self.index += 1;
+            } else if self.next_char().is_none() {
+                return Err("unterminated element".to_string());
             }
         }
     }
@@ -189,8 +189,11 @@ impl<'a> XmlParser<'a> {
     /// 读取标签或属性名。
     fn read_name(&mut self) -> Result<String, String> {
         let start = self.index;
-        while self.index < self.text.len() && matches!(self.text[self.index..].chars().next(), Some(ch) if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == ':') {
-            self.index += 1;
+        while let Some(ch) = self.next_char() {
+            if !(ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == ':') {
+                self.index -= ch.len_utf8();
+                break;
+            }
         }
         if start == self.index {
             return Err("expected name".to_string());
@@ -200,18 +203,27 @@ impl<'a> XmlParser<'a> {
 
     /// 读取引号包裹的属性值。
     fn read_attr(&mut self) -> Result<String, String> {
-        let quote = self.text[self.index..].chars().next().ok_or_else(|| "expected quote".to_string())?;
+        let quote = self.next_char().ok_or_else(|| "expected quote".to_string())?;
         if quote != '"' && quote != '\'' {
             return Err("expected quote".to_string());
         }
-        self.index += 1;
         let start = self.index;
-        while self.index < self.text.len() && !self.text[self.index..].starts_with(quote) {
-            self.index += 1;
+        loop {
+            let Some(ch) = self.next_char() else {
+                return Err("unterminated attribute".to_string());
+            };
+            if ch == quote {
+                let end = self.index - quote.len_utf8();
+                return Ok(self.text[start..end].to_string());
+            }
         }
-        let value = self.text[start..self.index].to_string();
-        self.index += 1;
-        Ok(value)
+    }
+
+    /// 按字符前进，避免切到 UTF-8 中间字节。
+    fn next_char(&mut self) -> Option<char> {
+        let ch = self.text[self.index..].chars().next()?;
+        self.index += ch.len_utf8();
+        Some(ch)
     }
 
     /// 跳过空白。

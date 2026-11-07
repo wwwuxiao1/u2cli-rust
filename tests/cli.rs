@@ -102,10 +102,12 @@ fn serve(listener: TcpListener) {
         let result = if body.contains("takeScreenshot") {
             "\"/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAGf/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABBQJ//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAwEBPwF//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPwF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQAGPwJ//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPyF//9k=\"".to_string()
         } else if body.contains("dumpWindowHierarchy") {
-            r#""<hierarchy><node class=\"android.widget.TextView\" text=\"Settings\" resource-id=\"pkg:id/title\" bounds=\"[10,20][200,80]\" clickable=\"true\" /><node class=\"android.widget.TextView\" text=\"Hidden\" bounds=\"[0,0][0,0]\" /></hierarchy>""#.to_string()
+            r#""<hierarchy><node class=\"android.widget.TextView\" text=\"设置\" resource-id=\"pkg:id/title\" bounds=\"[10,20][200,80]\" clickable=\"true\" /><node class=\"android.widget.TextView\" text=\"Hidden\" bounds=\"[0,0][0,0]\" /></hierarchy>""#.to_string()
+        } else if body.contains("objInfo") {
+            r#"{"bounds":{"left":10,"top":20,"right":200,"bottom":80},"visibleBounds":{"left":10,"top":20,"right":200,"bottom":80}}"#.to_string()
         } else if body.contains("waitUntilGone") {
             "false".to_string()
-        } else if body.contains("waitForExists") || body.contains("\"method\":\"exists\"") {
+        } else if body.contains("waitForExists") || body.contains("\"method\":\"exist\"") {
             "true".to_string()
         } else {
             "true".to_string()
@@ -222,7 +224,7 @@ fn device_commands_print_visible_results() {
     assert!(stdout(&screenshot).contains("resolution:"));
     assert!(shot.exists());
     let dumped = run_with_phone(&["dump-hierarchy"], &phone);
-    assert!(stdout(&dumped).contains("TextView \"Settings\""));
+    assert!(stdout(&dumped).contains("TextView \"设置\""));
     assert!(!stdout(&dumped).contains("Hidden"));
     let raw = run_with_phone(&["dump-hierarchy", "--raw"], &phone);
     assert!(stdout(&raw).contains("<hierarchy>"));

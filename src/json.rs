@@ -133,24 +133,43 @@ impl<'a> Parser<'a> {
             return Err("expected string".to_string());
         }
         let mut text = String::new();
-        while let Some(byte) = self.bump() {
-            match byte {
-                b'"' => return Ok(text),
-                b'\\' => {
-                    let escaped = self.bump().ok_or_else(|| "bad escape".to_string())?;
-                    text.push(match escaped {
-                        b'"' => '"',
-                        b'\\' => '\\',
-                        b'n' => '\n',
-                        b't' => '\t',
-                        b'r' => '\r',
-                        other => other as char,
-                    });
-                }
-                other => text.push(other as char),
+        while self.index < self.bytes.len() {
+            let byte = self.bytes[self.index];
+            if byte == b'"' {
+                self.index += 1;
+                return Ok(text);
             }
+            if byte == b'\\' {
+                self.index += 1;
+                let escaped = self.bump().ok_or_else(|| "bad escape".to_string())?;
+                text.push(match escaped {
+                    b'"' => '"',
+                    b'\\' => '\\',
+                    b'n' => '\n',
+                    b't' => '\t',
+                    b'r' => '\r',
+                    b'u' => self.parse_unicode_escape()?,
+                    other => other as char,
+                });
+                continue;
+            }
+            let rest = &self.bytes[self.index..];
+            let ch = std::str::from_utf8(rest).ok().and_then(|s| s.chars().next()).ok_or_else(|| "invalid utf-8 in json string".to_string())?;
+            text.push(ch);
+            self.index += ch.len_utf8();
         }
         Err("unterminated string".to_string())
+    }
+
+    /// 解析 JSON 的 \\uXXXX 转义。
+    fn parse_unicode_escape(&mut self) -> Result<char, String> {
+        let mut value = 0u32;
+        for _ in 0..4 {
+            let byte = self.bump().ok_or_else(|| "bad unicode escape".to_string())?;
+            let digit = (byte as char).to_digit(16).ok_or_else(|| "bad unicode escape".to_string())?;
+            value = (value << 4) | digit;
+        }
+        char::from_u32(value).ok_or_else(|| "invalid unicode escape".to_string())
     }
 
     /// 解析 JSON 数字。

@@ -1,7 +1,7 @@
 use crate::cli::{Command, Invocation, Selector, SelectorValue};
 use crate::device::Phone;
 use crate::hierarchy;
-use crate::json::Value;
+use crate::json::{self, Value};
 use crate::output::{self, py_bool, py_float, py_str};
 use crate::server;
 
@@ -259,14 +259,19 @@ fn send_keys(invocation: &Invocation, text: &str, clear: bool) -> Result<String,
 fn pointer(invocation: &Invocation, is_click: bool, x: Option<f64>, y: Option<f64>, duration: f64, timeout: f64, selector: &Selector, children: &[Selector]) -> Result<String, String> {
     let phone = connect(invocation)?;
     if !selector.fields.is_empty() {
-        let params = selector_params(selector, children, &[("timeout", Value::Number(timeout))]);
-        let method = if is_click { "click" } else { "longClick" };
-        phone.call(method, &params)?;
-        let code = if is_click {
-            format!("{}.click(timeout={})", selector_code(selector, children), py_float(timeout))
-        } else {
-            format!("{}.long_click(duration={}, timeout={})", selector_code(selector, children), py_float(duration), py_float(timeout))
-        };
+        let encoded = encode_selector(selector, children);
+        let found = phone.call("waitForExists", &Value::Array(vec![encoded.clone(), Value::Number((timeout * 1000.0) as f64)]))?;
+        if found != Value::Bool(true) {
+            return Err("element not found".to_string());
+        }
+        let (cx, cy) = selector_center(&phone, &encoded)?;
+        if is_click {
+            phone.call("click", &Value::Array(vec![Value::Number(cx), Value::Number(cy)]))?;
+            let code = format!("{}.click(timeout={})", selector_code(selector, children), py_float(timeout));
+            return Ok(output::success(Some(&phone.serial), Some(&code), &[], None));
+        }
+        phone.call("click", &Value::Array(vec![Value::Number(cx), Value::Number(cy), Value::Number((duration * 1000.0) as f64)]))?;
+        let code = format!("{}.long_click(duration={}, timeout={})", selector_code(selector, children), py_float(duration), py_float(timeout));
         return Ok(output::success(Some(&phone.serial), Some(&code), &[], None));
     }
     let (x, y) = match (x, y) {
@@ -277,7 +282,7 @@ fn pointer(invocation: &Invocation, is_click: bool, x: Option<f64>, y: Option<f6
         phone.call("click", &Value::Array(vec![Value::Number(x), Value::Number(y)]))?;
         Ok(output::success(Some(&phone.serial), Some(&format!("d.click({}, {})", py_float(x), py_float(y))), &[], None))
     } else {
-        phone.call("longClick", &Value::Array(vec![Value::Number(x), Value::Number(y), Value::Number(duration)]))?;
+        phone.call("click", &Value::Array(vec![Value::Number(x), Value::Number(y), Value::Number((duration * 1000.0) as f64)]))?;
         Ok(output::success(Some(&phone.serial), Some(&format!("d.long_click({}, {}, duration={})", py_float(x), py_float(y), py_float(duration))), &[], None))
     }
 }
@@ -315,9 +320,14 @@ fn selector_bool(invocation: &Invocation, kind: &str, timeout: f64, gone: bool, 
         return Err("at least one selector option is required".to_string());
     }
     let phone = connect(invocation)?;
-    let method = if kind == "exists" { "waitForExists" } else if gone { "waitUntilGone" } else { "waitForExists" };
-    let params = selector_params(selector, children, &[("timeout", Value::Number(timeout))]);
-    let result = phone.call(method, &params)?;
+    let encoded = encode_selector(selector, children);
+    let result = if kind == "exists" && timeout <= 0.0 {
+        phone.call("exist", &Value::Array(vec![encoded]))?
+    } else if gone {
+        phone.call("waitUntilGone", &Value::Array(vec![encoded, Value::Number((timeout * 1000.0) as f64)]))?
+    } else {
+        phone.call("waitForExists", &Value::Array(vec![encoded, Value::Number((timeout * 1000.0) as f64)]))?
+    };
     let flag = match result {
         Value::Bool(value) => value,
         _ => false,
@@ -336,20 +346,25 @@ fn scroll(invocation: &Invocation, direction: &str, action: &str, max_swipes: Op
         return Err("at least one selector option is required".to_string());
     }
     let phone = connect(invocation)?;
-    let mut extra = vec![
-        ("direction".to_string(), Value::Text(direction.to_string())),
-        ("action".to_string(), Value::Text(action.to_string())),
-    ];
+    let encoded = encode_selector(selector, children);
+    let vertical = direction != "horiz";
+    let max_swipes = max_swipes.unwrap_or(500) as f64;
+    let steps = 55.0;
     if let Some(text) = to_text {
-        extra.push(("text".to_string(), Value::Text(text.to_string())));
+        let target = encode_selector(&Selector { fields: vec![("text".to_string(), SelectorValue::Text(text.to_string()))] }, &[]);
+        phone.call("scrollTo", &Value::Array(vec![encoded, target, Value::Bool(vertical)]))?;
+    } else {
+        match action {
+            "forward" => { phone.call("scrollForward", &Value::Array(vec![encoded, Value::Bool(vertical), Value::Number(steps)]))?; }
+            "backward" => { phone.call("scrollBackward", &Value::Array(vec![encoded, Value::Bool(vertical), Value::Number(steps)]))?; }
+            "toBeginning" => { phone.call("scrollToBeginning", &Value::Array(vec![encoded, Value::Bool(vertical), Value::Number(max_swipes), Value::Number(steps)]))?; }
+            "toEnd" => { phone.call("scrollToEnd", &Value::Array(vec![encoded, Value::Bool(vertical), Value::Number(max_swipes), Value::Number(steps)]))?; }
+            other => return Err(format!("unsupported scroll action: {other}")),
+        }
     }
-    if let Some(swipes) = max_swipes {
-        extra.push(("maxSwipes".to_string(), Value::Number(swipes as f64)));
-    }
-    phone.call("scroll", &selector_params(selector, children, &extra.iter().map(|(k, v)| (k.as_str(), v.clone())).collect::<Vec<_>>()))?;
     let code = if let Some(text) = to_text {
         format!("{}.scroll.{direction}.to(text={})", selector_code(selector, children), py_str(text))
-    } else if let Some(swipes) = max_swipes {
+    } else if let Some(swipes) = max_swipes_opt(invocation) {
         format!("{}.scroll.{direction}.{action}(max_swipes={swipes})", selector_code(selector, children))
     } else {
         format!("{}.scroll.{direction}.{action}()", selector_code(selector, children))
@@ -357,28 +372,87 @@ fn scroll(invocation: &Invocation, direction: &str, action: &str, max_swipes: Op
     Ok(output::success(Some(&phone.serial), Some(&code), &[], None))
 }
 
-/// 组装选择器 JSON-RPC 参数。
-fn selector_params(selector: &Selector, children: &[Selector], extra: &[(&str, Value)]) -> Value {
-    let mut fields = vec![("selector".to_string(), selector_json(selector))];
-    if !children.is_empty() {
-        fields.push(("childSelectors".to_string(), Value::Array(children.iter().map(selector_json).collect())));
+/// 只有用户显式传入 max-swipes 时才写进 u2_code。
+fn max_swipes_opt(invocation: &Invocation) -> Option<i64> {
+    match &invocation.command {
+        Command::Scroll { max_swipes, .. } => *max_swipes,
+        _ => None,
     }
-    for (key, value) in extra {
-        fields.push(((*key).to_string(), value.clone()));
+}
+
+/// 编码成手机端 UiSelector 需要的对象，包含 mask 和子选择器。
+fn encode_selector(selector: &Selector, children: &[Selector]) -> Value {
+    let mut fields = layer_fields(selector);
+    let mut kinds = Vec::new();
+    let mut nested = Vec::new();
+    for child in children {
+        kinds.push(Value::Text("child".to_string()));
+        nested.push(Value::Object(layer_fields(child)));
     }
+    fields.push(("childOrSibling".to_string(), Value::Array(kinds)));
+    fields.push(("childOrSiblingSelector".to_string(), Value::Array(nested)));
     Value::Object(fields)
 }
 
-/// 把一层选择器编码成 JSON 对象。
-fn selector_json(selector: &Selector) -> Value {
-    Value::Object(selector.fields.iter().map(|(key, value)| {
+/// 编码一层选择器字段，并写入对应的 mask。
+fn layer_fields(selector: &Selector) -> Vec<(String, Value)> {
+    let mut mask = 0i64;
+    let mut fields = Vec::new();
+    for (key, value) in &selector.fields {
+        mask |= selector_mask(key);
         let encoded = match value {
             SelectorValue::Text(text) => Value::Text(text.clone()),
             SelectorValue::Bool(flag) => Value::Bool(*flag),
             SelectorValue::Int(number) => Value::Number(*number as f64),
         };
-        (key.clone(), encoded)
-    }).collect())
+        fields.push((key.clone(), encoded));
+    }
+    fields.insert(0, ("mask".to_string(), Value::Number(mask as f64)));
+    fields
+}
+
+/// 选择器字段对应的 mask 位。
+fn selector_mask(key: &str) -> i64 {
+    match key {
+        "text" => 0x01,
+        "textContains" => 0x02,
+        "textMatches" => 0x04,
+        "textStartsWith" => 0x08,
+        "className" => 0x10,
+        "description" => 0x40,
+        "descriptionContains" => 0x80,
+        "checkable" => 0x0400,
+        "checked" => 0x0800,
+        "clickable" => 0x1000,
+        "scrollable" => 0x4000,
+        "enabled" => 0x8000,
+        "focused" => 0x020000,
+        "selected" => 0x040000,
+        "packageName" => 0x080000,
+        "resourceId" => 0x200000,
+        "index" => 0x800000,
+        "instance" => 0x01000000,
+        _ => 0,
+    }
+}
+
+/// 读取选择器中心点。
+fn selector_center(phone: &Phone, selector: &Value) -> Result<(f64, f64), String> {
+    let info = phone.call("objInfo", &Value::Array(vec![selector.clone()]))?;
+    let bounds = json::object_get(&info, "visibleBounds").or_else(|| json::object_get(&info, "bounds")).ok_or_else(|| "selector has no bounds".to_string())?;
+    let left = number_field(bounds, "left")?;
+    let top = number_field(bounds, "top")?;
+    let right = number_field(bounds, "right")?;
+    let bottom = number_field(bounds, "bottom")?;
+    Ok(((left + right) / 2.0, (top + bottom) / 2.0))
+}
+
+/// 从对象中读取数字字段。
+fn number_field(value: &Value, key: &str) -> Result<f64, String> {
+    match json::object_get(value, key) {
+        Some(Value::Number(number)) => Ok(*number),
+        _ => Err(format!("missing number field {key}")),
+    }
 }
 
 /// 生成选择器的 u2_code 前缀。
