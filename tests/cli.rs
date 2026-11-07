@@ -11,10 +11,18 @@ fn run(args: &[&str]) -> Output {
 
 /// 在带假 adb 和假手机端服务的环境里运行 u2cli。
 fn run_with_phone(args: &[&str], phone: &Phone) -> Output {
+    run_with_phone_log(args, phone, None)
+}
+
+/// 在假设备环境里运行 u2cli，并可记录假 adb 收到的参数。
+fn run_with_phone_log(args: &[&str], phone: &Phone, log: Option<&std::path::Path>) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_u2cli"));
     command.args(args);
     command.env("PATH", format!("{}:{}", phone.adb_dir.display(), std::env::var("PATH").unwrap_or_default()));
     command.env("U2CLI_PHONE_PORT", phone.port.to_string());
+    if let Some(log) = log {
+        command.env("U2CLI_ADB_LOG", log);
+    }
     command.output().expect("run u2cli")
 }
 
@@ -49,6 +57,9 @@ fn fake_adb_script() -> String {
     r#"#!/bin/sh
 port="$U2CLI_PHONE_PORT"
 serial=serial-1
+if [ -n "$U2CLI_ADB_LOG" ]; then
+  printf '%s\n' "$*" >> "$U2CLI_ADB_LOG"
+fi
 if [ "$1" = "-s" ]; then
   serial="$2"
   shift 2
@@ -77,6 +88,7 @@ case "$1" in
       dumpsys\ window) printf 'mCurrentFocus=Window{abc u0 com.example/.Main}\n' ;;
       pm\ list\ packages*) printf 'package:com.example.one\npackage:com.example.two\n' ;;
       cmd\ package\ resolve-activity*) printf 'com.example/.Main\n' ;;
+      toybox\ md5sum*) printf 'd4f2cb5299dfd894a40fdde067b56bc9  /data/local/tmp/u2.jar\n' ;;
       *) printf 'ok\n' ;;
     esac
     ;;
@@ -98,6 +110,11 @@ fn serve(listener: TcpListener) {
         let mut buffer = [0u8; 8192];
         let size = stream.read(&mut buffer).unwrap_or(0);
         let request = String::from_utf8_lossy(&buffer[..size]);
+        if request.lines().next().unwrap_or("").starts_with("GET /ping") {
+            let response = "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\npong";
+            let _ = stream.write_all(response.as_bytes());
+            continue;
+        }
         let body = request.split("\r\n\r\n").nth(1).unwrap_or("");
         let result = if body.contains("takeScreenshot") {
             "\"/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAGf/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABBQJ//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAwEBPwF//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPwF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQAGPwJ//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPyF//9k=\"".to_string()
@@ -144,6 +161,7 @@ fn help_lists_command_groups() {
     for title in ["server commands:", "device commands:", "app commands:", "input commands:", "selector commands:", "system ui commands:"] {
         assert!(text.contains(title), "{text}");
     }
+    assert!(text.contains("install-service"), "{text}");
 }
 
 #[test]
@@ -237,16 +255,183 @@ fn device_commands_print_visible_results() {
 }
 
 #[test]
+fn installs_phone_service_when_it_is_not_running() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let gate = std::env::temp_dir().join(format!("u2cli-gate-{port}"));
+    let log = std::env::temp_dir().join(format!("u2cli-adb-log-{port}"));
+    let _ = std::fs::remove_file(&gate);
+    let _ = std::fs::remove_file(&log);
+    let gate_for_server = gate.clone();
+    thread::spawn(move || serve_until_started(listener, gate_for_server));
+    let adb_dir = std::env::temp_dir().join(format!("u2cli-install-adb-{port}"));
+    std::fs::create_dir_all(&adb_dir).unwrap();
+    let script = adb_dir.join("adb");
+    std::fs::write(&script, install_adb_script(&log, &gate)).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&script, permissions).unwrap();
+    }
+    let phone = Phone { port, adb_dir };
+    let output = run_with_phone(&["-s", "serial-1", "install-service"], &phone);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let text = stdout(&output);
+    assert!(text.contains("device_serial: serial-1"), "{text}");
+    assert!(text.contains("u2_code: d.install_service"), "{text}");
+    assert!(text.contains("running: True"), "{text}");
+    let recorded = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(recorded.contains("push"), "{recorded}");
+    assert!(recorded.contains("app_process"), "{recorded}");
+}
+
+#[test]
+fn install_service_skips_push_when_phone_service_matches() {
+    let phone = Phone::start();
+    let log = std::env::temp_dir().join(format!("u2cli-healthy-{}.log", phone.port));
+    let _ = std::fs::remove_file(&log);
+    let output = run_with_phone_log(&["-s", "serial-1", "install-service"], &phone, Some(&log));
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(stdout(&output).contains("running: True"));
+    let recorded = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(!recorded.contains("push"), "{recorded}");
+    assert!(!recorded.contains("app_process"), "{recorded}");
+}
+
+#[test]
+fn install_service_replaces_mismatched_jar() {
+    let phone = Phone::start();
+    let log = phone.adb_dir.join("calls.log");
+    let script = phone.adb_dir.join("adb");
+    std::fs::write(&script, mismatch_adb_script(&log)).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&script, permissions).unwrap();
+    }
+    let output = run_with_phone(&["-s", "serial-1", "install-service"], &phone);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(stdout(&output).contains("running: True"));
+    let recorded = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(recorded.contains("push"), "{recorded}");
+    assert!(recorded.contains("pkill"), "{recorded}");
+    assert!(recorded.contains("app_process"), "{recorded}");
+}
+
+/// 假 adb：记录 push，并在启动命令执行时打开手机端服务。
+fn install_adb_script(log: &std::path::Path, gate: &std::path::Path) -> String {
+    format!(r#"#!/bin/sh
+port="$U2CLI_PHONE_PORT"
+serial=serial-1
+if [ "$1" = "-s" ]; then
+  serial="$2"
+  shift 2
+fi
+printf '%s\n' "$*" >> "{log}"
+case "$1" in
+  devices)
+    printf 'List of devices attached\n%s\tdevice\n' "$serial"
+    ;;
+  forward)
+    printf '%s\n' "$port"
+    ;;
+  push)
+    printf 'ok\n'
+    ;;
+  shell)
+    shift
+    text="$*"
+    case "$text" in
+      *app_process*) touch "{gate}"; printf 'ok\n' ;;
+      getprop\ ro.serialno) printf '%s\n' "$serial" ;;
+      getprop\ ro.build.version.sdk) printf '34\n' ;;
+      getprop\ ro.product.brand) printf 'Fake\n' ;;
+      getprop\ ro.product.model) printf 'Phone\n' ;;
+      getprop\ ro.product.cpu.abi) printf 'arm64-v8a\n' ;;
+      getprop\ ro.build.version.release) printf '14\n' ;;
+      *) printf 'ok\n' ;;
+    esac
+    ;;
+  *)
+    printf 'ok\n'
+    ;;
+esac
+"#, log = log.display(), gate = gate.display())
+}
+
+/// 假 adb：设备上的 jar 摘要与内置文件不同。
+fn mismatch_adb_script(log: &std::path::Path) -> String {
+    format!(r#"#!/bin/sh
+port="$U2CLI_PHONE_PORT"
+serial=serial-1
+printf '%s\n' "$*" >> "{log}"
+if [ "$1" = "-s" ]; then
+  shift 2
+fi
+case "$1" in
+  devices)
+    printf 'List of devices attached\n%s\tdevice\n' "$serial"
+    ;;
+  forward)
+    printf '%s\n' "$port"
+    ;;
+  push)
+    printf 'ok\n'
+    ;;
+  shell)
+    shift
+    text="$*"
+    case "$text" in
+      toybox\ md5sum*) printf '00000000000000000000000000000000  /data/local/tmp/u2.jar\n' ;;
+      *) printf 'ok\n' ;;
+    esac
+    ;;
+  *)
+    printf 'ok\n'
+    ;;
+esac
+"#, log = log.display())
+}
+
+/// 假手机端服务：启动命令落地前拒绝 ping。
+fn serve_until_started(listener: TcpListener, gate: std::path::PathBuf) {
+    for stream in listener.incoming() {
+        let mut stream = match stream {
+            Ok(stream) => stream,
+            Err(_) => continue,
+        };
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+        let mut buffer = [0u8; 1024];
+        let size = stream.read(&mut buffer).unwrap_or(0);
+        let request = String::from_utf8_lossy(&buffer[..size]);
+        let body = if request.lines().next().unwrap_or("").starts_with("GET /ping") && gate.exists() {
+            "pong"
+        } else {
+            "down"
+        };
+        let response = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+        let _ = stream.write_all(response.as_bytes());
+    }
+}
+
+#[test]
 fn device_failure_has_no_traceback() {
-    let output = Command::new(env!("CARGO_BIN_EXE_u2cli"))
-        .args(["device-info"])
-        .env("PATH", "/usr/bin:/bin")
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(1));
-    let err = stderr(&output);
-    assert!(err.starts_with("error: "));
-    assert!(!err.contains("Traceback"));
+    for args in [vec!["device-info"], vec!["install-service"]] {
+        let output = Command::new(env!("CARGO_BIN_EXE_u2cli"))
+            .args(&args)
+            .env("PATH", "/usr/bin:/bin")
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        let err = stderr(&output);
+        assert!(err.starts_with("error: "), "{err}");
+        assert!(!err.contains("Traceback"));
+        assert!(stdout(&output).is_empty());
+    }
 }
 
 #[test]

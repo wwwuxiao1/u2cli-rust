@@ -39,6 +39,10 @@ pub fn dispatch(invocation: &Invocation) -> Result<String, String> {
             let pairs: Vec<(&str, String)> = fields.iter().map(|(key, value)| (*key, value.clone())).collect();
             Ok(output::success(status.device_serial.as_deref(), None, &pairs, None))
         }
+        Command::InstallService => {
+            let phone = connect(invocation)?;
+            Ok(output::success(Some(&phone.serial), Some("d.install_service"), &[("running", "True".to_string())], None))
+        }
         Command::DeviceInfo => {
             let phone = connect(invocation)?;
             let info = [

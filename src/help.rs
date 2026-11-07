@@ -8,7 +8,7 @@ pub struct Group {
 pub fn groups() -> &'static [Group] {
     &[
         Group { title: "server commands:", commands: &["server", "start-server", "kill-server", "server-status"] },
-        Group { title: "device commands:", commands: &["device-info", "window-size", "screenshot", "dump-hierarchy", "app-current", "shell"] },
+        Group { title: "device commands:", commands: &["install-service", "device-info", "window-size", "screenshot", "dump-hierarchy", "app-current", "shell"] },
         Group { title: "app commands:", commands: &["app-start", "app-list", "app-stop", "app-install", "app-uninstall", "app-clear"] },
         Group { title: "input commands:", commands: &["press", "send-keys", "clear-text", "click", "double-click", "long-click", "swipe", "drag"] },
         Group { title: "selector commands:", commands: &["exists", "wait", "scroll"] },
