@@ -1,4 +1,7 @@
-# u2cli
+# u2cli-rust
+之前使用 uiautomator2 的skill 操控手机,需要安装python3, 让AI重写了u2cli为单一的可执行文件,不需要额外安装依赖 , 仅支持mac.
+
+原openatx/uiautomator2 的仓库地址 https://github.com/openatx/uiautomator2
 
 在电脑上操作已连接 Android 设备的命令行。运行时不依赖 Python。手机端服务由这个程序自己安装和拉起。访问设备使用系统里的 `adb`，不会把 adb 打进文件。
 
